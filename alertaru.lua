@@ -123,7 +123,7 @@ ashita.register_event('load', function()
         end
     end
 end)
-ashita.register_event('incoming_text', function(mode, input, modifiedmode, modifiedmessage, blocked)
+local process_text_for_requests = function(mode, input)
     -- catches the message and analyzes it, to determine what to do
     local message = _data.Split(string.lower( input ), " ")
     local getUsername = _data.Split( input , " ")
@@ -143,7 +143,7 @@ ashita.register_event('incoming_text', function(mode, input, modifiedmode, modif
         username = string.match( username,'%a+')
         for word= 1,#message do
             -- looking for the KEYWORD
-            if message[word] == "@alertaru" then
+            if message[word] == "@nm" or message[word] == "@alertaru" then
                 for i=1,#message do
                     -- looking for the KEYFUNCTION
                     if message [i] == "tod" then
@@ -251,48 +251,54 @@ ashita.register_event('incoming_text', function(mode, input, modifiedmode, modif
                             end
                         end
                         
-                    elseif message [i] == "request" then
-                        
-                        
-                        --Get requested mob's name
-                        local target = message[i+1]
-                        
-                        target = (string.gsub(target, "^%s*(.-)%s*$", "%1"))
-                        
-                        --Get mob's index in Mobs table
-                        local index = _data.findIndex(target)
-                        -- checking its existance 
-                        if target == "list" and mode == 12 then -- and mode == 14 then
-                            requestList(username)                           
-                        else
-                            if  index ~= nil then
-                                -- Get Time of Death
-                                local ToD = Mobs[index].time_of_death
-                                -- local currentTime = _data.format_time(os.time(), "!%m:%d:%Y:%H:%M:%S %z", "-05:00", "EST")
-                                local rtime = _data.requestTime(target)
-                                local text = ''
-                                local tellText =''
-                                if rtime.state == 'Active' then
-                                    text = rtime.days.. 'd '.. rtime.hours.. 'h '.. rtime.minutes.. 'm ' .. rtime.seconds.. 's '
-                                    tellText = 'The time to W'..rtime.window..' is '.. text
-                                elseif rtime.state == 'Inactive' then
-                                    tellText = 'Time of death out of date'
-                                end
-                                    if mode == 14 then
-                                        AshitaCore:GetChatManager():QueueCommand('/l '.. username.. ': '.. tellText.. ' ', 1);
-                                    elseif mode == 12 then
-                                        AshitaCore:GetChatManager():QueueCommand('/tell '..username.. ' '.. tellText.. ' ' , 1);
-                                end
-                            else
-                                if mode == 14 then
-                                    AshitaCore:GetChatManager():QueueCommand('/l '.. username .. ': , Missing or Unknown Monster', 1);
-                                elseif mode == 12 then
-                                    local tellText = ', Missing or Unknown Monster'
-                                    AshitaCore:GetChatManager():QueueCommand('/tell '..username.. ' '.. tellText.. ' ' , 1);
-                                end
+                    elseif message [i] == "r" or message [i] == "request" then
+                        local istrue = false
+                        for admited = 1,#whitelist do
+                            if username == whitelist[admited] or mode == 14 then 
+                            istrue = true
                             end
                         end
-                    elseif (string.gsub(message [i], "^%s*(.-)%s*$", "%1")) == "help" then
+                        if istrue then						
+							--Get requested mob's name
+							local target = message[i+1]
+							
+							target = (string.gsub(target, "^%s*(.-)%s*$", "%1"))
+							
+							--Get mob's index in Mobs table
+							local index = _data.findIndex(target)
+							-- checking its existance 
+							if target == "list" and mode == 12 then -- and mode == 14 then
+								requestList(username)                           
+							else
+								if  index ~= nil then
+									-- Get Time of Death
+									local ToD = Mobs[index].time_of_death
+									-- local currentTime = _data.format_time(os.time(), "!%m:%d:%Y:%H:%M:%S %z", "-04:00", "EST")
+									local rtime = _data.requestTime(target)
+									local text = ''
+									local tellText =''
+									if rtime.state == 'Active' then
+										text = rtime.days.. 'd '.. rtime.hours.. 'h '.. rtime.minutes.. 'm ' .. rtime.seconds.. 's '
+										tellText = 'The time to W'..rtime.window..' is '.. text
+									elseif rtime.state == 'Inactive' then
+										tellText = 'Time of death out of date'
+									end
+										if mode == 14 then
+											AshitaCore:GetChatManager():QueueCommand('/l '.. username.. ': '.. tellText.. ' ', 1);
+										elseif mode == 12 then
+											AshitaCore:GetChatManager():QueueCommand('/tell '..username.. ' '.. tellText.. ' ' , 1);
+									end
+								else
+									if mode == 14 then
+                                    AshitaCore:GetChatManager():QueueCommand('/l '.. username .. ': , Missing or Unknown Monster', 1);
+									elseif mode == 12 then
+										local tellText = ', Missing or Unknown Monster'
+										AshitaCore:GetChatManager():QueueCommand('/tell '..username.. ' '.. tellText.. ' ' , 1);
+									end
+								end
+							end
+						end
+					elseif (string.gsub(message [i], "^%s*(.-)%s*$", "%1")) == "help" then
                         helpCommand()
                     end
                 
@@ -300,8 +306,48 @@ ashita.register_event('incoming_text', function(mode, input, modifiedmode, modif
         end
     end
     end
-    
-            
+    return false;
+end
 
+
+ashita.register_event('incoming_packet', function(id, size, packet)
+	
+    -- Check for incoming tells..
+    if (id == 0x17 and struct.unpack('b', packet, 0x04 + 1) == 0x03) then
+        
+		-- Is this a tell from a player..
+        if (struct.unpack('b', packet, 0x05 + 1) == 0) then
+			-- Obtain the chat message from the packet..
+			local msg, _ = struct.unpack('s', packet, 0x18 + 1);
+			local sender, _ = struct.unpack('s', packet, 0x08+1);
+			--error("msg: " .. sender .. ">> "  .. msg) -- Throws at the current stack
+			return process_text_for_requests(12, sender .. ">> "  .. msg)
+        end
+    
+	-- check for incoming ls messages
+	elseif (id == 0x17 and struct.unpack('b', packet, 0x04 + 1) == 0x05) then
+	
+		local msg, _ = struct.unpack('s', packet, 0x18 + 1);
+		local sender, _ = struct.unpack('s', packet, 0x08+1);
+		--error("<" .. sender .. "> " .. msg) -- Throws at the current stack
+		return process_text_for_requests(14,"<" .. sender .. "> " .. msg)
+	else
+	end
+	
+    
+    return false;
+end);
+
+ashita.register_event('outgoing_packet', function(id, size, packet)
+	
+	-- check for outgoing ls messages
+	if (id == 0x00B5 and struct.unpack('b', packet, 0x04 + 1) == 0x05) then
+		local msg, _ = struct.unpack('s', packet, 0x07);
+		local char_name = AshitaCore:GetDataManager():GetParty():GetMemberName(0)
+		-- delay the processing of outgoing ls messages (sent by character running alertaru) 
+		-- to conform to the rate limiting of sending messages
+		ashita.timer.once(0.5, process_text_for_requests, 14, "<" .. char_name .. "> " .. msg)
+	end
+    
     return false;
 end);
